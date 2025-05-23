@@ -162,6 +162,7 @@ def process_user_data(user_data, args):
     {results_html}
     <p>Your search query was: <i>{search_query}</i></p>
     <p>We thank arXiv for use of its open access interoperability.</p>
+    <p>Best regards, SONAR</p>
 </body>
 </html>"""
     msg = MIMEMultipart()
