@@ -153,7 +153,7 @@ def process_user_data(user_data, args):
         results_html = "<p>No new articles found based on your search query since the last run.</p>"
 
     # Compose email
-    subject = f"Weekly arXiv Updates ({date_from} to {date_to}, {user_name})"
+    subject = f"Your Weekly SONAR ({date_from} to {date_to}, {user_name})"
     body = f"""<html>
 <head></head>
 <body>
