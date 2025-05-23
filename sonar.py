@@ -196,13 +196,10 @@ def process_user_data(user_data, args):
     # Update the user's YAML with the new last run timestamp only if email was sent or printed
     if email_sent and not args.no_update:
         user_data["last_run"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        if args.user_file:
-            with open(args.user_file, "w") as file:
-                yaml.safe_dump(user_data, file, width=999999)
-        elif args.users_dir:
-            filepath = os.path.join(args.users_dir, f"{user_name.replace(' ', '_')}.yaml")
-            with open(filepath, "w") as file:
-                yaml.safe_dump(user_data, file, width=999999)
+        with open(user_data["filepath"], "w") as file:
+            update_data = user_data.copy()
+            update_data.pop("filepath", None)  # Remove filepath from the data to be saved
+            yaml.safe_dump(update_data, file, width=999999)
         logging.info(f"Updated last run timestamp for user: {user_name}")
 
 if __name__ == "__main__":
@@ -236,6 +233,7 @@ if __name__ == "__main__":
                     try:
                         with open(filepath, "r") as file:
                             user_data = yaml.safe_load(file)
+                            user_data['filepath'] = filepath 
                             process_user_data(user_data, args)
                     except FileNotFoundError:
                         logging.error(f"User data file not found: {filepath}")
