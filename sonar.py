@@ -14,7 +14,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("arxiv_notifier.log"),
+        logging.FileHandler("sonar.log"),
         logging.StreamHandler()
     ]
 )
