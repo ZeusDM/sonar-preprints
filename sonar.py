@@ -247,6 +247,7 @@ if __name__ == "__main__":
         try:
             with open(user_file, "r") as file:
                 user_data = yaml.safe_load(file)
+                user_data['filepath'] = user_file
                 process_user_data(user_data, args)
         except FileNotFoundError:
             logging.error(f"User data file not found: {user_file}")
