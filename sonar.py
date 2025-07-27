@@ -61,6 +61,9 @@ def search_arxiv_api(search_query, start_datetime, end_datetime, max_results=100
     """
     Query the arXiv API and return parsed results.
     """
+    # Clean up the search query by replacing newlines with spaces
+    search_query = search_query.replace('\n', ' ')
+    
     base_url = "http://export.arxiv.org/api/query?"
     from_datetime = start_datetime.replace("-", "").replace(" ", "").replace(":", "")
     to_datetime = end_datetime.replace("-", "").replace(" ", "").replace(":", "")
