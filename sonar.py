@@ -125,35 +125,73 @@ def search_arxiv_api(search_query, start_datetime, end_datetime, max_results=100
 def process_user_data(user_data, args):
     user_name = user_data["user"]
     email_address = user_data["email_address"]
-    search_query = user_data["search_query"]
-
     logging.info(f"Processing user: {user_name}")
+
+    # Normalize queries: accept either 'search_query' (single string) or 'search_queries' (list)
+    queries = []
+    if "search_queries" in user_data and isinstance(user_data["search_queries"], list):
+        # Filter out empty / null entries and ensure they're strings
+        queries = [q for q in user_data["search_queries"] if q]
+    elif "search_query" in user_data and user_data["search_query"]:
+        queries = [user_data["search_query"]]
+    else:
+        logging.warning(f"No search_query or search_queries specified for user: {user_name}")
+        return
 
     # Compute datetime range based on per-user last run
     last_run = user_data.get("last_run", None)
     date_from, date_to = compute_weekly_range(last_run)
     logging.info(f"Date range: {date_from} to {date_to}")
 
-    # Perform ArXiv API search
-    try:
-        search_results = search_arxiv_api(search_query, date_from, date_to)
-        logging.info(f"Found {len(search_results)} results for {user_name}")
-    except Exception as e:
-        logging.error(f"Error fetching arXiv results for {user_name}: {e}")
-        return
+    # Perform ArXiv API searches for each query and merge results uniquely by link
+    merged = {}  # key: link, value: result dict
+    total_found = 0
+    for q in queries:
+        try:
+            results = search_arxiv_api(q, date_from, date_to)
+            logging.info(f"Found {len(results)} results for {user_name} (query: {q})")
+            total_found += len(results)
+        except Exception as e:
+            logging.error(f"Error fetching arXiv results for {user_name} (query: {q}): {e}")
+            continue
+
+        for r in results:
+            link = r.get("link")
+            if not link:
+                continue
+            # Keep the entry with the most recent published date if duplicate
+            existing = merged.get(link)
+            if not existing:
+                merged[link] = r
+            else:
+                try:
+                    if r.get("published") and existing.get("published") and r["published"] > existing["published"]:
+                        merged[link] = r
+                except Exception:
+                    # If published comparison fails, keep existing
+                    pass
+
+    search_results = sorted(merged.values(), key=lambda x: x.get("published", datetime.min), reverse=True)
+
+    logging.info(f"Total (raw) results across queries for {user_name}: {total_found}. After dedupe: {len(search_results)}")
 
     # Format search results for email
     results_html = ""
     if search_results:
         for result in search_results:
             results_html += f"<p><strong>Title:</strong> <a href=\"{result['link']}\">{result['title']}</a><br>\n"
-            results_html += f"<strong>Authors:</strong> {', '.join(result['authors'])}<br>\n"
-            results_html += f"{result['published'].strftime('%Y-%m-%d %H:%M:%S')}<br>\n"
-            results_html += f"<i>Summary:</i> {result['summary']}</p>\n"
+            results_html += f"<strong>Authors:</strong> {', '.join(result.get('authors', []))}<br>\n"
+            published = result.get('published')
+            if published:
+                results_html += f"{published.strftime('%Y-%m-%d %H:%M:%S')}<br>\n"
+            results_html += f"<i>Summary:</i> {result.get('summary', '')}</p>\n"
             results_html += "<hr>\n"
     else:
         logging.warning(f"No results found for user '{user_name}'")
         results_html = "<p>No new articles found based on your search query since the last run.</p>"
+
+    # Prepare display of queries used
+    queries_display = ', '.join(queries)
 
     # Compose email
     subject = f"Your Weekly SONAR ({date_from} to {date_to}, {user_name})"
@@ -163,7 +201,7 @@ def process_user_data(user_data, args):
     <p>Hello {user_name},</p>
     <p>Here are the arXiv updates since the last time this program was run ({date_from} to {date_to}):</p>
     {results_html}
-    <p>Your search query was: <i>{search_query}</i></p>
+    <p>Your search queries were: <i>{queries_display}</i></p>
     <p>We thank arXiv for use of its open access interoperability.</p>
     <p>Best regards, SONAR</p>
 </body>
