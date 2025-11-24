@@ -1,4 +1,6 @@
 import requests
+import urllib.parse
+import re
 from datetime import datetime, timedelta
 from xml.etree import ElementTree
 import os
@@ -57,6 +59,61 @@ def compute_weekly_range(last_run_datetime_str=None):
         end_datetime = now
         return start_datetime.strftime("%Y-%m-%d %H:%M:%S"), end_datetime.strftime("%Y-%m-%d %H:%M:%S")
 
+def make_queries_from_categories_and_keywords(categories, keywords, max_len=2000):
+    """
+    Given lists of categories and keywords, construct one or more search_query strings
+    that combine the categories and keywords, ensuring that the encoded length of each
+    query does not exceed max_len.
+    Returns a list of search_query strings (WITHOUT the submittedDate clause).
+    """
+    if not keywords:
+        if categories:
+            categories_expr = " OR ".join([f"cat:{c}" for c in categories if c])
+            return [categories_expr]
+        return []
+
+    # Prepare category expression
+    categories = [c for c in (categories or []) if c]
+    categories_expr = " OR ".join([f"cat:{c}" for c in categories]) if categories else ""
+
+    queries = []
+    chunk = []
+
+    for token in keywords:
+        tentative = chunk + [token]
+        kw_clause = " OR ".join(tentative)
+        if categories_expr:
+            candidate = f"({categories_expr}) AND ({kw_clause})"
+        else:
+            candidate = f"({kw_clause})"
+
+        # Measure only the encoded search_query part (not base URL or date)
+        # as requested — encode the candidate itself and enforce max_len on that.
+        encoded_query = urllib.parse.quote_plus(candidate)
+
+        if len(encoded_query) > max_len:
+            if not chunk:
+                raise ValueError(f"Single keyword too long to construct a safe query: {token}")
+            kw_clause_prev = " OR ".join(chunk)
+            if categories_expr:
+                q_prev = f"({categories_expr}) AND ({kw_clause_prev})"
+            else:
+                q_prev = f"({kw_clause_prev})"
+            queries.append(q_prev)
+            chunk = [token]
+        else:
+            chunk = tentative
+
+    if chunk:
+        kw_clause = " OR ".join(chunk)
+        if categories_expr:
+            q = f"({categories_expr}) AND ({kw_clause})"
+        else:
+            q = f"({kw_clause})"
+        queries.append(q)
+
+    return queries
+
 def search_arxiv_api(search_query, start_datetime, end_datetime, max_results=100):
     """
     Query the arXiv API and return parsed results.
@@ -87,9 +144,6 @@ def search_arxiv_api(search_query, start_datetime, end_datetime, max_results=100
     logging.debug(f"Query URL: {url}")
 
     data = response.content
-    root = ElementTree.fromstring(data)
-    results = []
-
     # Parse the XML response
     root = ElementTree.fromstring(data)
     results = []
@@ -129,14 +183,61 @@ def process_user_data(user_data, args):
 
     # Normalize queries: accept either 'search_query' (single string) or 'search_queries' (list)
     queries = []
-    if "search_queries" in user_data and isinstance(user_data["search_queries"], list):
-        # Filter out empty / null entries and ensure they're strings
-        queries = [q for q in user_data["search_queries"] if q]
-    elif "search_query" in user_data and user_data["search_query"]:
-        queries = [user_data["search_query"]]
+    # For email display: keep original categories/keywords (if present)
+    categories_list = []
+    keywords_list = []
+
+    # New-style: categories + keywords -> chunk keywords into OR-clauses combined with categories
+    if ("keywords" in user_data and user_data["keywords"]):
+        # keywords may be a list or a newline/commas separated string
+        raw_keywords = user_data["keywords"]
+        if isinstance(raw_keywords, str):
+            # split on newlines or commas
+            kw_list = [k.strip() for k in re.split(r"[,\n]", raw_keywords) if k.strip()]
+        elif isinstance(raw_keywords, list):
+            kw_list = [k for k in raw_keywords if k]
+        else:
+            kw_list = []
+
+        # categories may be provided as list or comma/newline separated string
+        raw_cats = user_data.get("categories", [])
+        if isinstance(raw_cats, str):
+            cat_list = [c.strip() for c in re.split(r"[,\n]", raw_cats) if c.strip()]
+        elif isinstance(raw_cats, list):
+            cat_list = [c for c in raw_cats if c]
+        else:
+            cat_list = []
+
+        if not kw_list and not cat_list:
+            logging.warning(f"No keywords or categories specified for user: {user_name}")
+            return
+
+        # compute date range for measuring encoded URL lengths
+        last_run = user_data.get("last_run", None)
+        date_from, date_to = compute_weekly_range(last_run)
+
+        try:
+            max_len = globals().get("MAX_QUERY_URL_LEN", 3500)
+            queries = make_queries_from_categories_and_keywords(cat_list, kw_list, max_len=max_len)
+        except Exception as e:
+            logging.error(f"Error building queries for {user_name} from keywords/categories: {e}")
+            return
+        # capture for email display
+        categories_list = cat_list
+        keywords_list = kw_list
+
     else:
-        logging.warning(f"No search_query or search_queries specified for user: {user_name}")
-        return
+        if "search_queries" in user_data and isinstance(user_data["search_queries"], list):
+            # Filter out empty / null entries and ensure they're strings
+            queries = [q for q in user_data["search_queries"] if q]
+            # treat these as keywords for display
+            keywords_list = queries.copy()
+        elif "search_query" in user_data and user_data["search_query"]:
+            queries = [user_data["search_query"]]
+            keywords_list = queries.copy()
+        else:
+            logging.warning(f"No search_query/search_queries or keywords specified for user: {user_name}")
+            return
 
     # Compute datetime range based on per-user last run
     last_run = user_data.get("last_run", None)
@@ -190,8 +291,9 @@ def process_user_data(user_data, args):
         logging.warning(f"No results found for user '{user_name}'")
         results_html = "<p>No new articles found based on your search query since the last run.</p>"
 
-    # Prepare display of queries used
-    queries_display = ', '.join(queries)
+    # Prepare display of categories/keywords used
+    categories_display = ', '.join(categories_list) if categories_list else "(none)"
+    keywords_display = ', '.join(keywords_list) if keywords_list else "(none)"
 
     # Compose email
     subject = f"Your Weekly SONAR ({date_from} to {date_to}, {user_name})"
@@ -201,7 +303,8 @@ def process_user_data(user_data, args):
     <p>Hello {user_name},</p>
     <p>Here are the arXiv updates since the last time this program was run ({date_from} to {date_to}):</p>
     {results_html}
-    <p>Your search queries were: <i>{queries_display}</i></p>
+    <p>Your categories: <i>{categories_display}</i></p>
+    <p>Your keywords: <i>{keywords_display}</i></p>
     <p>We thank arXiv for use of its open access interoperability.</p>
     <p>Best regards, SONAR</p>
 </body>
