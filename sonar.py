@@ -11,6 +11,7 @@ from email.mime.multipart import MIMEMultipart
 import argparse
 import logging
 import time
+import sys
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,6 +21,11 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+
+
+class ArxivAPIError(Exception):
+    """Raised when the arXiv API fails repeatedly and the program should stop."""
+    pass
 
 def load_config(config_file):
     """
@@ -137,9 +143,10 @@ def search_arxiv_api(search_query, start_datetime, end_datetime, max_results=100
                 logging.warning(f"Attempt {attempt + 1}: API request failed with status code {response.status_code}")
         except Exception as e:
             logging.warning(f"Attempt {attempt + 1}: Error fetching results from arXiv API: {e}")
-        if attempt == 2:  # If this is the last attempt, raise the exception
+        if attempt == 2:  # If this is the last attempt, raise a fatal API error
             logging.error("All attempts to fetch results from arXiv API failed.")
-            raise Exception("Failed to fetch results from arXiv API after 3 attempts")
+            # Raise a specific exception so callers can decide to stop the whole program
+            raise ArxivAPIError("Failed to fetch results from arXiv API after 3 attempts")
 
     logging.debug(f"Query URL: {url}")
 
@@ -253,6 +260,12 @@ def process_user_data(user_data, args):
             logging.info(f"Found {len(results)} results for {user_name} (query: {q})")
             total_found += len(results)
         except Exception as e:
+            # If the arXiv API failed repeatedly, it's a fatal condition: stop the whole program.
+            if isinstance(e, ArxivAPIError):
+                logging.error(f"Fatal arXiv API error for {user_name} (query: {q}): {e}")
+                logging.error("Halting execution due to repeated arXiv API failures.")
+                # Exit immediately with non-zero status to indicate failure
+                sys.exit(1)
             logging.error(f"Error fetching arXiv results for {user_name} (query: {q}): {e}")
             continue
 
