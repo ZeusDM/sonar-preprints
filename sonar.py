@@ -309,7 +309,7 @@ def process_user_data(user_data, args):
     keywords_display = ', '.join(keywords_list) if keywords_list else "(none)"
 
     # Compose email
-    subject = f"Your Weekly SONAR ({date_from} to {date_to}, {user_name})"
+    subject = f"Your Weekly SONAR ({date_from[:10]} to {date_to[:10]}, {user_name})"
     body = f"""<html>
 <head></head>
 <body>
