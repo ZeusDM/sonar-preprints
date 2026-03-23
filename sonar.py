@@ -182,68 +182,117 @@ def search_arxiv_api(search_query, start_datetime, end_datetime, max_results=100
     results.sort(key=lambda x: x["published"], reverse=True)
     return results
 
+def normalize_input(user_data):
+    """
+    Normalize user data, ensuring ``keywords`` and ``categories`` are always
+    lists, regardless of how they appear in the YAML (a plain string, a
+    comma/newline-separated string, or already a list).
+
+    Returns a tuple ``(keywords, categories)`` of lists.
+    """
+    raw_keywords = user_data.get("keywords", [])
+    if isinstance(raw_keywords, str):
+        keywords = [k.strip() for k in re.split(r"[,\n]", raw_keywords) if k.strip()]
+    elif isinstance(raw_keywords, list):
+        keywords = [k for k in raw_keywords if k]
+    else:
+        keywords = []
+
+    raw_cats = user_data.get("categories", [])
+    if isinstance(raw_cats, str):
+        categories = [c.strip() for c in re.split(r"[,\n]", raw_cats) if c.strip()]
+    elif isinstance(raw_cats, list):
+        categories = [c for c in raw_cats if c]
+    else:
+        categories = []
+
+    return keywords, categories
+
+
+def build_email_body(user_name, date_from, date_to, search_results, categories_list, keywords_list):
+    """
+    Build the HTML email subject and body from search results.
+
+    Returns a tuple ``(subject, body)`` where both are strings.
+    """
+    results_html = ""
+    if search_results:
+        for result in search_results:
+            results_html += f"<p><strong>Title:</strong> <a href=\"{result['link']}\">{result['title']}</a><br>\n"
+            results_html += f"<strong>Authors:</strong> {', '.join(result.get('authors', []))}<br>\n"
+            published = result.get("published")
+            if published:
+                results_html += f"{published.strftime('%Y-%m-%d %H:%M:%S')}<br>\n"
+            results_html += f"<i>Summary:</i> {result.get('summary', '')}</p>\n"
+            results_html += "<hr>\n"
+    else:
+        results_html = "<p>No new articles found based on your search query since the last run.</p>"
+
+    categories_display = ', '.join(categories_list) if categories_list else "(none)"
+    keywords_display = ', '.join(keywords_list) if keywords_list else "(none)"
+
+    subject = f"Your Weekly SONAR ({date_from[:10]} to {date_to[:10]}, {user_name})"
+    body = f"""<html>
+<head></head>
+<body>
+    <p>Hello {user_name},</p>
+    <p>Here are the arXiv updates since the last time this program was run ({date_from} to {date_to}):</p>
+    {results_html}
+    <p>Your categories: <i>{categories_display}</i></p>
+    <p>Your keywords: <i>{keywords_display}</i></p>
+    <p>We thank arXiv for use of its open access interoperability.</p>
+    <p>Best regards, SONAR</p>
+</body>
+</html>"""
+    return subject, body
+
+
+def update_last_run(user_data):
+    """
+    Update the ``last_run`` timestamp in the user's YAML file.
+    """
+    user_data["last_run"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    update_data = user_data.copy()
+    update_data.pop("filepath", None)  # Remove filepath from the data to be saved
+    Path(user_data["filepath"]).write_text(yaml.safe_dump(update_data, width=999999))
+    logging.info(f"Updated last run timestamp for user: {user_data['user']}")
+
+
 def process_user_data(user_data, args):
     user_name = user_data["user"]
     email_address = user_data["email_address"]
     logging.info(f"Processing user: {user_name}")
 
-    # Normalize queries: accept either 'search_query' (single string) or 'search_queries' (list)
+    # Stage 1: Normalize input — ensure keywords and categories are always lists
+    keywords_list, categories_list = normalize_input(user_data)
+
+    # Build queries based on available input fields
     queries = []
-    # For email display: keep original categories/keywords (if present)
-    categories_list = []
-    keywords_list = []
-
-    # New-style: categories + keywords -> chunk keywords into OR-clauses combined with categories
-    if ("keywords" in user_data and user_data["keywords"]):
-        # keywords may be a list or a newline/commas separated string
-        raw_keywords = user_data["keywords"]
-        if isinstance(raw_keywords, str):
-            # split on newlines or commas
-            kw_list = [k.strip() for k in re.split(r"[,\n]", raw_keywords) if k.strip()]
-        elif isinstance(raw_keywords, list):
-            kw_list = [k for k in raw_keywords if k]
-        else:
-            kw_list = []
-
-        # categories may be provided as list or comma/newline separated string
-        raw_cats = user_data.get("categories", [])
-        if isinstance(raw_cats, str):
-            cat_list = [c.strip() for c in re.split(r"[,\n]", raw_cats) if c.strip()]
-        elif isinstance(raw_cats, list):
-            cat_list = [c for c in raw_cats if c]
-        else:
-            cat_list = []
-
-        if not kw_list and not cat_list:
+    if "keywords" in user_data and user_data["keywords"]:
+        if not keywords_list and not categories_list:
             logging.warning(f"No keywords or categories specified for user: {user_name}")
             return
 
-        # compute date range for measuring encoded URL lengths
-        last_run = user_data.get("last_run", None)
-        date_from, date_to = compute_weekly_range(last_run)
-
         try:
             max_len = globals().get("MAX_QUERY_URL_LEN", 3500)
-            queries = make_queries_from_categories_and_keywords(cat_list, kw_list, max_len=max_len)
+            queries = make_queries_from_categories_and_keywords(categories_list, keywords_list, max_len=max_len)
         except Exception as e:
             logging.error(f"Error building queries for {user_name} from keywords/categories: {e}")
             return
-        # capture for email display
-        categories_list = cat_list
-        keywords_list = kw_list
-
+    elif "search_queries" in user_data and isinstance(user_data["search_queries"], list):
+        # Filter out empty / null entries and ensure they're strings
+        queries = [q for q in user_data["search_queries"] if q]
+        # treat these as keywords for display; categories not used in legacy mode
+        keywords_list = queries.copy()
+        categories_list = []
+    elif "search_query" in user_data and user_data["search_query"]:
+        queries = [user_data["search_query"]]
+        # treat the single query as keyword for display; categories not used in legacy mode
+        keywords_list = queries.copy()
+        categories_list = []
     else:
-        if "search_queries" in user_data and isinstance(user_data["search_queries"], list):
-            # Filter out empty / null entries and ensure they're strings
-            queries = [q for q in user_data["search_queries"] if q]
-            # treat these as keywords for display
-            keywords_list = queries.copy()
-        elif "search_query" in user_data and user_data["search_query"]:
-            queries = [user_data["search_query"]]
-            keywords_list = queries.copy()
-        else:
-            logging.warning(f"No search_query/search_queries or keywords specified for user: {user_name}")
-            return
+        logging.warning(f"No search_query/search_queries or keywords specified for user: {user_name}")
+        return
 
     # Compute datetime range based on per-user last run
     last_run = user_data.get("last_run", None)
@@ -288,39 +337,12 @@ def process_user_data(user_data, args):
 
     logging.info(f"Total (raw) results across queries for {user_name}: {total_found}. After dedupe: {len(search_results)}")
 
-    # Format search results for email
-    results_html = ""
-    if search_results:
-        for result in search_results:
-            results_html += f"<p><strong>Title:</strong> <a href=\"{result['link']}\">{result['title']}</a><br>\n"
-            results_html += f"<strong>Authors:</strong> {', '.join(result.get('authors', []))}<br>\n"
-            published = result.get('published')
-            if published:
-                results_html += f"{published.strftime('%Y-%m-%d %H:%M:%S')}<br>\n"
-            results_html += f"<i>Summary:</i> {result.get('summary', '')}</p>\n"
-            results_html += "<hr>\n"
-    else:
+    if not search_results:
         logging.warning(f"No results found for user '{user_name}'")
-        results_html = "<p>No new articles found based on your search query since the last run.</p>"
 
-    # Prepare display of categories/keywords used
-    categories_display = ', '.join(categories_list) if categories_list else "(none)"
-    keywords_display = ', '.join(keywords_list) if keywords_list else "(none)"
+    # Stage 2: Build the email body using the HTML generator
+    subject, body = build_email_body(user_name, date_from, date_to, search_results, categories_list, keywords_list)
 
-    # Compose email
-    subject = f"Your Weekly SONAR ({date_from[:10]} to {date_to[:10]}, {user_name})"
-    body = f"""<html>
-<head></head>
-<body>
-    <p>Hello {user_name},</p>
-    <p>Here are the arXiv updates since the last time this program was run ({date_from} to {date_to}):</p>
-    {results_html}
-    <p>Your categories: <i>{categories_display}</i></p>
-    <p>Your keywords: <i>{keywords_display}</i></p>
-    <p>We thank arXiv for use of its open access interoperability.</p>
-    <p>Best regards, SONAR</p>
-</body>
-</html>"""
     msg = MIMEMultipart()
     msg["From"] = FROM_ADDRESS
     msg["To"] = email_address
@@ -349,13 +371,9 @@ def process_user_data(user_data, args):
             logging.error(f"Failed to send email to {email_address}: {e}")
             email_sent = False
 
-    # Update the user's YAML with the new last run timestamp only if email was sent or printed
+    # Stage 3: Update state — persist the last_run timestamp
     if email_sent and not args.no_update:
-        user_data["last_run"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        update_data = user_data.copy()
-        update_data.pop("filepath", None)  # Remove filepath from the data to be saved
-        Path(user_data["filepath"]).write_text(yaml.safe_dump(update_data, width=999999))
-        logging.info(f"Updated last run timestamp for user: {user_name}")
+        update_last_run(user_data)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ArXiv Filter Script")
