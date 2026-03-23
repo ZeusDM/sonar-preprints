@@ -3,7 +3,7 @@ import urllib.parse
 import re
 from datetime import datetime, timedelta
 from xml.etree import ElementTree
-import os
+from pathlib import Path
 import yaml
 import smtplib
 from email.mime.text import MIMEText
@@ -32,8 +32,7 @@ def load_config(config_file):
     Load configuration from a YAML file.
     """
     try:
-        with open(config_file, "r") as file:
-            config = yaml.safe_load(file)
+        config = yaml.safe_load(Path(config_file).read_text())
         return config
     except FileNotFoundError:
         logging.error(f"Configuration file not found: {config_file}")
@@ -353,10 +352,9 @@ def process_user_data(user_data, args):
     # Update the user's YAML with the new last run timestamp only if email was sent or printed
     if email_sent and not args.no_update:
         user_data["last_run"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(user_data["filepath"], "w") as file:
-            update_data = user_data.copy()
-            update_data.pop("filepath", None)  # Remove filepath from the data to be saved
-            yaml.safe_dump(update_data, file, width=999999)
+        update_data = user_data.copy()
+        update_data.pop("filepath", None)  # Remove filepath from the data to be saved
+        Path(user_data["filepath"]).write_text(yaml.safe_dump(update_data, width=999999))
         logging.info(f"Updated last run timestamp for user: {user_name}")
 
 if __name__ == "__main__":
@@ -380,29 +378,25 @@ if __name__ == "__main__":
     FROM_ADDRESS = config.get("FROM_ADDRESS", "example@example.com")
 
     if args.users_dir:
-        users_dir = args.users_dir
-        if not os.path.isdir(users_dir):
+        users_dir = Path(args.users_dir)
+        if not users_dir.is_dir():
             logging.error(f"Directory not found: {users_dir}")
         else:
-            for filename in os.listdir(users_dir):
-                if filename.endswith(".yaml"):
-                    filepath = os.path.join(users_dir, filename)
-                    try:
-                        with open(filepath, "r") as file:
-                            user_data = yaml.safe_load(file)
-                            user_data['filepath'] = filepath 
-                            process_user_data(user_data, args)
-                    except FileNotFoundError:
-                        logging.error(f"User data file not found: {filepath}")
-                    except yaml.YAMLError as e:
-                        logging.error(f"Error parsing YAML in {filepath}: {e}")
+            for filepath in users_dir.glob("*.yaml"):
+                try:
+                    user_data = yaml.safe_load(filepath.read_text())
+                    user_data['filepath'] = filepath
+                    process_user_data(user_data, args)
+                except FileNotFoundError:
+                    logging.error(f"User data file not found: {filepath}")
+                except yaml.YAMLError as e:
+                    logging.error(f"Error parsing YAML in {filepath}: {e}")
     elif args.user_file:
-        user_file = args.user_file
+        user_file = Path(args.user_file)
         try:
-            with open(user_file, "r") as file:
-                user_data = yaml.safe_load(file)
-                user_data['filepath'] = user_file
-                process_user_data(user_data, args)
+            user_data = yaml.safe_load(user_file.read_text())
+            user_data['filepath'] = user_file
+            process_user_data(user_data, args)
         except FileNotFoundError:
             logging.error(f"User data file not found: {user_file}")
         except yaml.YAMLError as e:
