@@ -46,6 +46,8 @@ def compute_weekly_range(last_run_datetime_str=None):
     Computes the datetime range from the last run datetime to now.
     If no last run datetime is provided or is invalid, it defaults to the
     range from 7 days ago to now.
+
+    Return a tuple of native datetime objects (start_datetime, end_datetime).
     """
     now = datetime.now()
     if last_run_datetime_str:
@@ -53,16 +55,16 @@ def compute_weekly_range(last_run_datetime_str=None):
             last_run_datetime = datetime.strptime(last_run_datetime_str, "%Y-%m-%d %H:%M:%S")
             start_datetime = last_run_datetime + timedelta(seconds=1)
             end_datetime = now
-            return start_datetime.strftime("%Y-%m-%d %H:%M:%S"), end_datetime.strftime("%Y-%m-%d %H:%M:%S")
+            return start_datetime, end_datetime
         except ValueError:
             logging.warning("Invalid last run datetime format. Falling back to the last 7 days.")
             start_datetime = now - timedelta(days=7)
             end_datetime = now
-            return start_datetime.strftime("%Y-%m-%d %H:%M:%S"), end_datetime.strftime("%Y-%m-%d %H:%M:%S")
+            return start_datetime, end_datetime
     else:
         start_datetime = now - timedelta(days=7)
         end_datetime = now
-        return start_datetime.strftime("%Y-%m-%d %H:%M:%S"), end_datetime.strftime("%Y-%m-%d %H:%M:%S")
+        return start_datetime, end_datetime
 
 def make_queries_from_categories_and_keywords(categories, keywords, max_len=2000):
     """
@@ -127,9 +129,10 @@ def search_arxiv_api(search_query, start_datetime, end_datetime, max_results=100
     search_query = search_query.replace('\n', ' ')
     
     base_url = "http://export.arxiv.org/api/query?"
-    from_datetime = start_datetime.replace("-", "").replace(" ", "").replace(":", "")
-    to_datetime = end_datetime.replace("-", "").replace(" ", "").replace(":", "")
-    query = f"search_query=({search_query})+AND+submittedDate:[{from_datetime}+TO+{to_datetime}]"
+    from_datetime_str = start_datetime.strftime("%Y%m%d%H%M%S")
+    to_datetime_str = end_datetime.strftime("%Y%m%d%H%M%S")
+
+    query = f"search_query=({search_query})+AND+submittedDate:[{from_datetime_str}+TO+{to_datetime_str}]"
     url = f"{base_url}{query}&start=0&max_results={max_results}"
 
     for attempt in range(3):  # Try up to 3 times
@@ -215,6 +218,17 @@ def build_email_body(user_name, date_from, date_to, search_results, categories_l
 
     Returns a tuple ``(subject, body)`` where both are strings.
     """
+    # Ensure date_from/date_to are strings for display (they may be datetimes)
+    if hasattr(date_from, "strftime"):
+        date_from_str = date_from.strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        date_from_str = date_from
+
+    if hasattr(date_to, "strftime"):
+        date_to_str = date_to.strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        date_to_str = date_to
+
     results_html = ""
     if search_results:
         for result in search_results:
@@ -231,12 +245,12 @@ def build_email_body(user_name, date_from, date_to, search_results, categories_l
     categories_display = ', '.join(categories_list) if categories_list else "(none)"
     keywords_display = ', '.join(keywords_list) if keywords_list else "(none)"
 
-    subject = f"Your Weekly SONAR ({date_from[:10]} to {date_to[:10]}, {user_name})"
+    subject = f"Your Weekly SONAR ({date_from_str[:10]} to {date_to_str[:10]}, {user_name})"
     body = f"""<html>
 <head></head>
 <body>
     <p>Hello {user_name},</p>
-    <p>Here are the arXiv updates since the last time this program was run ({date_from} to {date_to}):</p>
+    <p>Here are the arXiv updates since the last time this program was run ({date_from_str} to {date_to_str}):</p>
     {results_html}
     <p>Your categories: <i>{categories_display}</i></p>
     <p>Your keywords: <i>{keywords_display}</i></p>
