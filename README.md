@@ -10,13 +10,22 @@ We thank arXiv for use of its open access interoperability.
 
 If someone else is managing the execution of this program for you, you only need to provide a configuration file in YAML format. This file should include your email address, the last time the program was run for you (optional), and your search query. Here's an example of what your configuration file should look like:
 
-### Example User Configuration File (`config.yaml`)
+### Example User Configuration File (`user.yaml`)
 
 ```yaml
 user: Your Name
 email_address: your_email@example.com
-last_run: '2025-05-23 14:41:43'  # Optional, leave blank if running for the first time
-search_query: au:"Author Name" OR au:"Author Name2" OR (all:"Keyword" ANDNOT all:"Keyword2")
+categories: ["math.CO", "math.RT"] # Only papers that contain one of these categories will be included in the results.
+keywords: ['au:"Researcher A"',
+    'au:"Researcher B"',
+    'au:"Researcher C"',
+    'au:"Researcher D"',
+    'ti:"Keyword 1"', # Search for "Keyword 1" in the title.
+    'abs:"Keyword 2"', # Search for "Keyword 2" in the abstract.
+    'all:"Keyword 3"', # Search for "Keyword 3" anywhere.
+    '(au:"Researcher E" AND ti:"Keyword 4")', # Search for papers authored by "Researcher E" that also have "Keyword 4" in the title.
+    '(au:"Researcher F" AND cat:"math.CO")', # Search for papers authored by "Researcher F" that are categorized under "math.CO".
+] # For more information, see https://arxiv.org/help/api/user-manual#search_query_elements.
 ```
 
 Provide this file to the person running the program, and they will handle the rest.
