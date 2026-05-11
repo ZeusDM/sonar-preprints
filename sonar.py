@@ -250,7 +250,7 @@ def build_email_body(user_name, date_from, date_to, search_results, categories_l
 <head></head>
 <body>
     <p>Hello {user_name},</p>
-    <p>Here are the arXiv updates since the last time this program was run ({date_from_str} to {date_to_str}):</p>
+    <p>Here are the arXiv updates since the last time this program was run ({date_from_str[:10]} to {date_to_str[:10]}):</p>
     {results_html}
     <p>Your categories: <i>{categories_display}</i></p>
     <p>Your keywords: <i>{keywords_display}</i></p>
