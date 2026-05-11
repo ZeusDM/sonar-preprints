@@ -378,6 +378,8 @@ def process_user_data(user_data, args):
     else:
         try:
             with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+                server.starttls()
+                server.login(SMTP_USER, SMTP_PASS)
                 server.sendmail(FROM_ADDRESS, email_address, msg.as_string())
                 logging.info(f"Email sent to {email_address}")
                 email_sent = True
@@ -407,6 +409,8 @@ if __name__ == "__main__":
     config = load_config(args.config)
     SMTP_SERVER = config.get("SMTP_SERVER", "localhost")
     SMTP_PORT = config.get("SMTP_PORT", 25)
+    SMTP_USER = config.get("SMTP_USER", "")
+    SMTP_PASS = config.get("SMTP_PASS", "")
     FROM_ADDRESS = config.get("FROM_ADDRESS", "example@example.com")
 
     if args.users_dir:
